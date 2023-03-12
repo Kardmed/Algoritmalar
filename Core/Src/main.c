@@ -18,13 +18,24 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "math.h"
-#include "stdio.h"
-
+#include "fatfs.h"
+#include "i2c.h"
+#include "spi.h"
+#include "tim.h"
+#include "usart.h"
+#include "gpio.h"
+   #include "stm32f4xx.h"
+   
+    #include "system_stm32f4xx.h"
+    #include "stm32f4xx_hal_gpio.h"
+    #include "stm32f4xx_hal_rcc.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "bno055.h"//eksen için
+#include "bmp180.h"//bmp180 kütühanesini ekliyoruz
+#define HIGH 1
+#define LOW 0
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,19 +53,15 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-I2C_HandleTypeDef hi2c1;//I2C
-UART_HandleTypeDef huart4;
+
 /* USER CODE BEGIN PV */
-float sıcaklık,basınç,yükseklik;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void MX_GPIO_Init(void);
-void MX_UART4_Init(void);
-void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
-initialBMP180();
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -69,15 +76,33 @@ initialBMP180();
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
+//bno055_get_Accel_XYZ(float xyz[3])
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+	 
 
   /* USER CODE BEGIN Init */
+	 HAL_Init(); 
+	 /*#define MAIN_Pin GPIO_PIN_1
+  #define MAIN_GPIO_Port GPIOB
+#define DRAG_Pin GPIO_PIN_2
+#define DRAG_GPIO_Port GPIOB*/
+	 //MAİN
+	GPIO_InitTypeDef GPIO_InitStruct={0};
+	GPIO_InitStruct.Pin=MAIN_Pin;
+	GPIO_InitStruct.Mode=GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull=GPIO_NOPULL;
+	HAL.GPIO.Init(MAIN_GPIO_Port,&GPIO_InitStruct);
+	//DRAG
+	GPIO_InitStruct.Pin=DRAG_Pin;
+		GPIO_InitStruct.Mode=GPIO_MODE_OUTPUT_PP;
+		GPIO_InitStruct.Pull=GPIO_NOPULL;
+		HAL.GPIO.Init(DRAG_GPIO_Port,&GPIO_InitStruct);
+
+
 
   /* USER CODE END Init */
 
@@ -89,37 +114,80 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
-   MX_GPIO_Init();
-   MX_UART4_Init();
-   MX_I2C1_Init();
+  MX_GPIO_Init();
+  MX_TIM2_Init();
+  MX_I2C1_Init();
+  MX_I2C3_Init();
+  MX_SPI1_Init();
+  MX_SPI2_Init();
+  MX_SPI3_Init();
+  MX_UART4_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
+  float temp;
+  float pressure;
+  float altitude;
+  float altitudeguess;
+  float maxaltitude=0;
 
   /* USER CODE END 2 */
-   BNO055_I2C (&hi2c2);
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     /* USER CODE END WHILE */
-      sıcaklık=readTrueTemp();
-      basınç=readTruePress(0);
-      yükseklik=readTrueAltitude(0);
-      printf("Your temp:%.2f,Your press:%.2f, Your Altitude:%.2f\n",sıcaklık,basınç,yükseklik);
-      HAL_Delay(300);
-	  GetAccelData(&hi2c1, (uint8_t*)imu_readings);
-	  accel_data[0] = (((int16_t)((uint8_t *)(imu_readings))[1] << 8) | ((uint8_t *)(imu_readings))[0]);
-	  accel_data[1] = (((int16_t)((uint8_t *)(imu_readings))[3] << 8) | ((uint8_t *)(imu_readings))[2]);
-	  accel_data[2] = (((int16_t)((uint8_t *)(imu_readings))[5] << 8) | ((uint8_t *)(imu_readings))[4]);
-	  acc_x = ((float)(accel_data[0]))/100.0f;
-	  acc_y = ((float)(accel_data[1]))/100.0f;
-	  acc_z = ((float)(accel_data[2]))/100.0f;
-	  printf("X: %.2f Y: %.2f Z: %.2f\r\n", acc_x, acc_y, acc_z);
-
 
     /* USER CODE BEGIN 3 */
+	  temp=readTrueTemp();
+	  pressure=readTruePress();
+	  altitude=readTrueAltitude();
+	  HAL_Delay(100);
+	  //BMP180NİN DATA SHHETE GÖRE ÇALIŞMA KOŞULLARI HPA ve DERECE CİNSİ	  sonuç m
+	  if(pressure>100000||temp>85||temp<45){
+		  HAL_PWR_EnableBkUpAccess();  
+		  __HAL_PWR_CLEAR_FLAG(PWR_FLAG_WU);
+		  HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
+	  }
+	  //hypsometric formülün uygulanışı yükseklik değeriniin sıcaklık ve basınçla uyumlu olup olmadığını ölçülmesi
+	  //11kmden sonra değişiklik olabilir
+	  //HAL_GPIO_WritePin(GPIOB, SPI1_RES_Pin|MAIN_Pin|DRAG_Pin|SPI2_NSS_Pin, GPIO_PIN_RESET);
+	  altitudeguess= (pow(1013.25/pressure,1/5257)-1)*(temp+273.15)/0.0065;
+	  if(altitude!=altitudeguess&&altitude<11000){
+		  if(altitude==0){
+			  
+		  printf("There is a problem");
+		  HAL_PWR_EnableBkUpAccess();  
+			 __HAL_PWR_CLEAR_FLAG(PWR_FLAG_WU);
+			 HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);}
+		  if(altitude >0){
+			  printf("There is a problem");
+			  /*#define MAIN_Pin GPIO_PIN_1
+			   #define MAIN_GPIO_Port GPIOB
+			 #define DRAG_Pin GPIO_PIN_2
+			 #define DRAG_GPIO_Port GPIOB*/
+			  HAL_GPIO_Write_Pin(GPIOB,GPIO_PIN_1,HIGH);
+			  delay(1500);//15 saniye sonra ikini paraşüt 
+			  HAL_GPIO_Write_Pin(GPIOB,GPIO_PIN_2,HIGH);
+		  }
+		 
+		 }
+	  else{
+		  //bno55 z eksiye düşmeye başladıktan 15m sonra paraşütleri aç
+		 	 if(altitude>maxaltitude){
+		 		 maxaltitude=altitude;
+	  }
+	  if(altitude-maxaltitude=15){
+		  HAL_GPIO_Write_Pin(GPIOB,GPIO_PIN_1,HIGH);
+		  delay(1500);
+		  HAL_GPIO_Write_Pin(GPIOB,GPIO_PIN_2,HIGH);
+		  
+	  }
+	  
+	  
   }
   /* USER CODE END 3 */
-}
+
 
 /**
   * @brief System Clock Configuration
@@ -133,7 +201,7 @@ void SystemClock_Config(void)
   /** Configure the main internal regulator output voltage
   */
   __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -141,8 +209,21 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 180;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLR = 2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Activate the Over-Drive mode
+  */
+  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
   {
     Error_Handler();
   }
@@ -151,17 +232,16 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
   {
     Error_Handler();
   }
 }
-
 
 /* USER CODE BEGIN 4 */
 
@@ -174,9 +254,6 @@ void SystemClock_Config(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-	if(){
-
-	}
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
@@ -184,7 +261,6 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
 
 #ifdef  USE_FULL_ASSERT
 /**
